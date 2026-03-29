@@ -18,6 +18,7 @@ from homeassistant.helpers.typing import ConfigType
 from py_nissan_leaf_obd_ble import NissanLeafObdBleApiClient
 from .const import DOMAIN, PLATFORMS, STARTUP_MESSAGE
 from .coordinator import NissanLeafObdBleDataUpdateCoordinator
+from ._debug_agent import agent_log, set_debug_log_config_dir
 
 _LOGGER: logging.Logger = logging.getLogger(__package__)
 
@@ -32,6 +33,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     if hass.data.get(DOMAIN) is None:
         hass.data.setdefault(DOMAIN, {})
         _LOGGER.info(STARTUP_MESSAGE)
+
+    # Debug NDJSON: primary path is <config>/nissan_leaf_debug_67a564.ndjson
+    set_debug_log_config_dir(hass.config.config_dir)
 
     address: str = entry.data[CONF_ADDRESS]
     ble_device = bluetooth.async_ble_device_from_address(
@@ -52,6 +56,36 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     await coordinator.async_config_entry_first_refresh()
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+    async def _run_advert_wakeup() -> None:
+        # #region agent log
+        import time as _time_monotonic
+
+        t0 = _time_monotonic.monotonic()
+        agent_log(
+            "__init__:_run_advert_wakeup",
+            "task_start",
+            {"address": address},
+            "H1",
+        )
+        try:
+            await coordinator.async_request_refresh()
+        except Exception as err:  # noqa: BLE001
+            agent_log(
+                "__init__:_run_advert_wakeup",
+                "task_exception",
+                {"err_type": type(err).__name__, "err": str(err)[:200]},
+                "H3",
+            )
+            raise
+        dt = _time_monotonic.monotonic() - t0
+        agent_log(
+            "__init__:_run_advert_wakeup",
+            "after_async_request_refresh",
+            {"seconds": round(dt, 4)},
+            "H1",
+        )
+        # #endregion
+
     @callback
     def _async_specific_device_found(
         service_info: bluetooth.BluetoothServiceInfoBleak,
@@ -59,8 +93,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     ) -> None:
         """Handle re-discovery of the device."""
         _LOGGER.debug("New service_info: %s - %s", service_info, change)
+        # #region agent log
+        agent_log(
+            "__init__:_async_specific_device_found",
+            "callback_fired",
+            {"change": str(change)},
+            "H3",
+        )
+        # #endregion
         # have just discovered the device is back in range - ping the coordinator to update immediately
-        hass.async_create_task(coordinator.async_request_refresh())
+        hass.async_create_task(_run_advert_wakeup())
 
     # stuff to do when cleaning up
     entry.async_on_unload(
