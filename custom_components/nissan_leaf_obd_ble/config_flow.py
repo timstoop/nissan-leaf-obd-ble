@@ -27,9 +27,10 @@ from .const import (
     DEFAULT_SERVICE_UUID,
     DEFAULT_CHARACTERISTIC_UUID_READ,
     DEFAULT_CHARACTERISTIC_UUID_WRITE,
+    DEVICE_UUID_PROFILES,
 )
 
-LOCAL_NAMES = {"OBDBLE"}
+LOCAL_NAMES = {"OBDBLE"} | set(DEVICE_UUID_PROFILES.keys())
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -78,11 +79,18 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 discovery_info.address, raise_on_progress=False
             )
             self._abort_if_unique_id_configured()
+            initial_options = next(
+                (v for k, v in DEVICE_UUID_PROFILES.items() if local_name.startswith(k)),
+                {
+                    CONF_SERVICE_UUID: DEFAULT_SERVICE_UUID,
+                    CONF_CHARACTERISTIC_UUID_READ: DEFAULT_CHARACTERISTIC_UUID_READ,
+                    CONF_CHARACTERISTIC_UUID_WRITE: DEFAULT_CHARACTERISTIC_UUID_WRITE,
+                },
+            )
             return self.async_create_entry(
                 title=local_name,
-                data={
-                    CONF_ADDRESS: discovery_info.address,
-                },
+                data={CONF_ADDRESS: discovery_info.address},
+                options=initial_options,
             )
 
         if discovery := self._discovery_info:
