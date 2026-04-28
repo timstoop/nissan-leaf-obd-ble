@@ -5,6 +5,7 @@ from datetime import timedelta
 import logging
 from typing import Any
 
+from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth.api import async_address_present
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -74,6 +75,15 @@ class NissanLeafObdBleDataUpdateCoordinator(DataUpdateCoordinator):
             if self.options.get("cache_values", False):
                 return self._cache_data
             return {}
+
+        # Refresh the BLE device before connecting. The object captured at setup
+        # becomes stale after a disconnect; bleak_retry_connector needs fresh
+        # advertisement data to reliably re-establish the GATT connection.
+        ble_device = bluetooth.async_ble_device_from_address(
+            self.hass, self._address.upper(), connectable=True
+        )
+        if ble_device:
+            self.api._ble_device = ble_device
 
         try:
             new_data = await asyncio.wait_for(
