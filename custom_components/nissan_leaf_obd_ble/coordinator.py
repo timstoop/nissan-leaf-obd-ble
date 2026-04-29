@@ -1,5 +1,6 @@
 """Coodinator for Nissan Leaf OBD BLE."""
 
+import asyncio
 from datetime import timedelta
 import logging
 from typing import Any
@@ -33,6 +34,9 @@ DEFAULT_FAST_POLL = 10  # pick sane defaults for your integration
 DEFAULT_SLOW_POLL = 300
 DEFAULT_XS_POLL = 3600
 DEFAULT_CACHE_VALUES = True
+# Cap BLE read duration so HA's request_refresh debouncer lock is not held forever;
+# otherwise BLE advertisements trigger async_request_refresh() but it no-ops (~70ms).
+DEFAULT_FETCH_TIMEOUT = 90
 
 
 class NissanLeafObdBleDataUpdateCoordinator(DataUpdateCoordinator):
@@ -82,7 +86,10 @@ class NissanLeafObdBleDataUpdateCoordinator(DataUpdateCoordinator):
             self.api._ble_device = ble_device
 
         try:
-            new_data = await self.api.async_get_data(self.options)
+            new_data = await asyncio.wait_for(
+                self.api.async_get_data(self.options),
+                timeout=self._fetch_timeout,
+            )
             if new_data is None:
                 raise UpdateFailed("Failed to connect to OBD device")
             if len(new_data) == 0:
@@ -98,6 +105,10 @@ class NissanLeafObdBleDataUpdateCoordinator(DataUpdateCoordinator):
                     "Car is on, polling: interval = %s",
                     self.update_interval,
                 )
+        except TimeoutError as err:
+            raise UpdateFailed(
+                f"BLE fetch timed out after {self._fetch_timeout}s"
+            ) from err
         except Exception as err:
             raise UpdateFailed(f"Unable to fetch data: {err}") from err
         else:
@@ -119,3 +130,6 @@ class NissanLeafObdBleDataUpdateCoordinator(DataUpdateCoordinator):
         self._slow_poll_interval = options.get("slow_poll", DEFAULT_SLOW_POLL)
         self._xs_poll_interval = options.get("xs_poll", DEFAULT_XS_POLL)
         self._cache_values = options.get("cache_values", DEFAULT_CACHE_VALUES)
+        self._fetch_timeout = float(
+            options.get("fetch_timeout", DEFAULT_FETCH_TIMEOUT)
+        )
