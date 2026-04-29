@@ -6,7 +6,6 @@ import logging
 from typing import Any
 
 from homeassistant.components import bluetooth
-from homeassistant.components.bluetooth.api import async_address_present
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -61,29 +60,32 @@ class NissanLeafObdBleDataUpdateCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self) -> dict[str, Any]:
         """Update data via library."""
 
-        # Check if the device is still available
-        _LOGGER.debug("Check if the device is still available to connect")
-        available = async_address_present(self.hass, self._address, connectable=True)
-        if not available:
-            # Device out of range? Switch to active polling interval for when it reappears
-            _LOGGER.debug("Car out of range? Switch to extra slow polling")
-            self.update_interval = timedelta(seconds=self._xs_poll_interval)
+        # Prefer a connectable advertisement, but fall back to any seen advertisement.
+        # Using async_address_present(connectable=True) as the sole gate causes the
+        # coordinator to switch to xs_poll whenever the dongle stops advertising after
+        # a GATT session ends -- which it does every time -- so it never reconnects
+        # until the next HA restart. If the device was seen at all, attempt a connection
+        # and let establish_connection fail naturally if it is truly unreachable.
+        _LOGGER.debug("Looking up BLE device for address %s", self._address)
+        ble_device = bluetooth.async_ble_device_from_address(
+            self.hass, self._address.upper(), connectable=True
+        ) or bluetooth.async_ble_device_from_address(
+            self.hass, self._address.upper(), connectable=False
+        )
+
+        if not ble_device:
             _LOGGER.debug(
-                "Car out of range? Switch to ultra slow polling: interval = %s",
-                self.update_interval,
+                "Device not seen at all, switching to xs_poll: %s",
+                timedelta(seconds=self._xs_poll_interval),
             )
-            if self.options.get("cache_values", False):
+            self.update_interval = timedelta(seconds=self._xs_poll_interval)
+            if self._cache_values and self._cache_data:
                 return self._cache_data
             return {}
 
-        # Refresh the BLE device before connecting. The object captured at setup
-        # becomes stale after a disconnect; bleak_retry_connector needs fresh
-        # advertisement data to reliably re-establish the GATT connection.
-        ble_device = bluetooth.async_ble_device_from_address(
-            self.hass, self._address.upper(), connectable=True
-        )
-        if ble_device:
-            self.api._ble_device = ble_device
+        # Always refresh the stored device object so bleak_retry_connector
+        # has fresh advertisement data for the connection attempt.
+        self.api._ble_device = ble_device
 
         try:
             new_data = await asyncio.wait_for(
