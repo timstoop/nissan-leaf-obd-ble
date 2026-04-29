@@ -5,6 +5,8 @@ from datetime import timedelta
 import logging
 from typing import Any
 
+from bleak_retry_connector import get_device
+
 from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -67,15 +69,19 @@ class NissanLeafObdBleDataUpdateCoordinator(DataUpdateCoordinator):
         # until the next HA restart. If the device was seen at all, attempt a connection
         # and let establish_connection fail naturally if it is truly unreachable.
         _LOGGER.debug("Looking up BLE device for address %s", self._address)
-        ble_device = bluetooth.async_ble_device_from_address(
-            self.hass, self._address.upper(), connectable=True
-        ) or bluetooth.async_ble_device_from_address(
-            self.hass, self._address.upper(), connectable=False
+        ble_device = (
+            bluetooth.async_ble_device_from_address(
+                self.hass, self._address.upper(), connectable=True
+            )
+            or bluetooth.async_ble_device_from_address(
+                self.hass, self._address.upper(), connectable=False
+            )
+            or await get_device(self._address)
         )
 
         if not ble_device:
             _LOGGER.debug(
-                "Device not seen at all, switching to xs_poll: %s",
+                "Device not found after active scan, switching to xs_poll: %s",
                 timedelta(seconds=self._xs_poll_interval),
             )
             self.update_interval = timedelta(seconds=self._xs_poll_interval)
