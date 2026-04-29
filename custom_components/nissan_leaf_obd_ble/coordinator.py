@@ -29,8 +29,8 @@ SLOW_POLL_INTERVAL = timedelta(minutes=5)
 # see __init__.py: _async_specific_device_found()
 ULTRA_SLOW_POLL_INTERVAL = timedelta(hours=1)
 
-DEFAULT_FAST_POLL = 30   # poll interval when car is on
-DEFAULT_SLOW_POLL = 30   # car off or connection error: retry every 30s
+DEFAULT_FAST_POLL = 10   # poll interval when car is on
+DEFAULT_SLOW_POLL = 300  # car off or connection error: retry every 5 min
 DEFAULT_XS_POLL = 3600
 DEFAULT_CACHE_VALUES = True
 # Cap BLE read duration so HA's request_refresh debouncer lock is not held forever;
