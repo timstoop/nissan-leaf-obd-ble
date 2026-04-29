@@ -5,8 +5,6 @@ from datetime import timedelta
 import logging
 from typing import Any
 
-from bleak_retry_connector import get_device
-
 from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -68,30 +66,30 @@ class NissanLeafObdBleDataUpdateCoordinator(DataUpdateCoordinator):
         # a GATT session ends -- which it does every time -- so it never reconnects
         # until the next HA restart. If the device was seen at all, attempt a connection
         # and let establish_connection fail naturally if it is truly unreachable.
+        # Refresh the stored device object if a fresh advertisement is available.
+        # Prefer connectable, fall back to any seen advertisement. If neither is
+        # in the registry (dongle stopped advertising after last session), keep
+        # the existing self.api._ble_device from __init__ and attempt anyway --
+        # bleak_retry_connector will still try to connect via the proxy.
+        # Only xs_poll if we have no device object at all (never been set up).
         _LOGGER.debug("Looking up BLE device for address %s", self._address)
-        ble_device = (
-            bluetooth.async_ble_device_from_address(
-                self.hass, self._address.upper(), connectable=True
-            )
-            or bluetooth.async_ble_device_from_address(
-                self.hass, self._address.upper(), connectable=False
-            )
-            or await get_device(self._address)
+        ble_device = bluetooth.async_ble_device_from_address(
+            self.hass, self._address.upper(), connectable=True
+        ) or bluetooth.async_ble_device_from_address(
+            self.hass, self._address.upper(), connectable=False
         )
+        if ble_device:
+            self.api._ble_device = ble_device
 
-        if not ble_device:
+        if self.api._ble_device is None:
             _LOGGER.debug(
-                "Device not found after active scan, switching to xs_poll: %s",
+                "No BLE device object available, switching to xs_poll: %s",
                 timedelta(seconds=self._xs_poll_interval),
             )
             self.update_interval = timedelta(seconds=self._xs_poll_interval)
             if self._cache_values and self._cache_data:
                 return self._cache_data
             return {}
-
-        # Always refresh the stored device object so bleak_retry_connector
-        # has fresh advertisement data for the connection attempt.
-        self.api._ble_device = ble_device
 
         try:
             new_data = await asyncio.wait_for(
