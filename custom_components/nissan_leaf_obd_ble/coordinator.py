@@ -30,8 +30,8 @@ SLOW_POLL_INTERVAL = timedelta(minutes=5)
 # see __init__.py: _async_specific_device_found()
 ULTRA_SLOW_POLL_INTERVAL = timedelta(hours=1)
 
-DEFAULT_FAST_POLL = 10  # pick sane defaults for your integration
-DEFAULT_SLOW_POLL = 300
+DEFAULT_FAST_POLL = 30   # poll interval when car is on
+DEFAULT_SLOW_POLL = 30   # car off or connection error: retry every 30s
 DEFAULT_XS_POLL = 3600
 DEFAULT_CACHE_VALUES = True
 # Cap BLE read duration so HA's request_refresh debouncer lock is not held forever;
@@ -106,10 +106,18 @@ class NissanLeafObdBleDataUpdateCoordinator(DataUpdateCoordinator):
                     self.update_interval,
                 )
         except TimeoutError as err:
+            self.update_interval = timedelta(seconds=self._slow_poll_interval)
+            _LOGGER.debug("BLE fetch timed out, backing off to slow poll: %s", self.update_interval)
+            if self._cache_values and self._cache_data:
+                return self._cache_data
             raise UpdateFailed(
                 f"BLE fetch timed out after {self._fetch_timeout}s"
             ) from err
         except Exception as err:
+            self.update_interval = timedelta(seconds=self._slow_poll_interval)
+            _LOGGER.debug("BLE fetch error (%s), backing off to slow poll: %s", err, self.update_interval)
+            if self._cache_values and self._cache_data:
+                return self._cache_data
             raise UpdateFailed(f"Unable to fetch data: {err}") from err
         else:
             if self.options.get("cache_values", False):
