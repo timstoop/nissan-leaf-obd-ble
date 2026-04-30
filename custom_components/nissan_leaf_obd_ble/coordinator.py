@@ -108,7 +108,19 @@ class NissanLeafObdBleDataUpdateCoordinator(DataUpdateCoordinator):
             if new_data is None:
                 raise UpdateFailed("Failed to connect to OBD device")
             if len(new_data) == 0:
-                # Car is probably off. Switch to slow polling inteval
+                # The Leaf's VCM (header 797) sleeps within seconds of inactivity. The
+                # first 0210C0 "Mystery" query wakes the CAN bus but the ECU isn't
+                # responsive yet, so api.async_get_data() returns no data. A retry
+                # within ~4s catches the ECU awake and succeeds.
+                _LOGGER.debug("First attempt empty, retrying immediately to catch ECU wake-up")
+                new_data = await asyncio.wait_for(
+                    self.api.async_get_data(self.options),
+                    timeout=self._fetch_timeout,
+                )
+                if new_data is None:
+                    raise UpdateFailed("Failed to connect to OBD device on retry")
+            if len(new_data) == 0:
+                # Both attempts empty -- car probably truly off. Switch to slow poll.
                 self.update_interval = timedelta(seconds=self._slow_poll_interval)
                 _LOGGER.debug(
                     "Car is probably off, switch to slow polling: interval = %s",
