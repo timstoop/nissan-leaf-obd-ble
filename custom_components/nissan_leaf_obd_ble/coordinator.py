@@ -9,7 +9,7 @@ from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from bleak_retry_connector import BleakOutOfConnectionSlotsError
+from bleak_retry_connector import BleakOutOfConnectionSlotsError, get_device
 from py_nissan_leaf_obd_ble import NissanLeafObdBleApiClient
 from .const import DOMAIN
 
@@ -93,6 +93,14 @@ class NissanLeafObdBleDataUpdateCoordinator(DataUpdateCoordinator):
             return {}
 
         try:
+            # If the passive registry lookup returned nothing, do an active scan.
+            # This mirrors what __init__.py does at startup and can wake the dongle
+            # out of a stuck state where it advertises but won't accept connections.
+            if not ble_device:
+                fresh = await get_device(self._address)
+                if fresh:
+                    self.api._ble_device = fresh
+
             new_data = await asyncio.wait_for(
                 self.api.async_get_data(self.options),
                 timeout=self._fetch_timeout,
