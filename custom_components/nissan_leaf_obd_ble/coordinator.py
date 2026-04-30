@@ -108,10 +108,43 @@ class NissanLeafObdBleDataUpdateCoordinator(DataUpdateCoordinator):
             if new_data is None:
                 raise UpdateFailed("Failed to connect to OBD device")
             if len(new_data) == 0:
-                # The Leaf's VCM (header 797) sleeps within seconds of inactivity. The
-                # first 0210C0 "Mystery" query wakes the CAN bus but the ECU isn't
-                # responsive yet, so api.async_get_data() returns no data. A retry
-                # within ~4s catches the ECU awake and succeeds.
+                # Why this retry exists -- the "only reads after restart" bug:
+                #
+                # The Leaf VCM ECU at CAN header 797 sleeps within seconds of bus
+                # inactivity. py_nissan_leaf_obd_ble's command loop in api.py sends
+                # 0210C0 ("Mystery") as the very first query and breaks out of the
+                # loop with `data = {}` if it returns zero messages:
+                #     if command.name == "unknown" and len(response.messages) == 0:
+                #         break
+                # The first 0210C0 effectively wakes the CAN bus, but the ECU is
+                # not responsive in time for that query's own response. Without a
+                # retry, the coordinator sees an empty dict, treats it as "car
+                # probably off" and switches to slow_poll (5 min). The next cycle
+                # re-runs ATZ + full ELM init, which lets the ECU sleep again, so
+                # we're right back to a single failed Mystery and the car is
+                # silently mis-classified as off. The result is that SoC etc. only
+                # update once at HA startup and then freeze indefinitely, even
+                # while the car is charging.
+                #
+                # Why the integration restart historically appeared to "fix" this:
+                # async_setup_entry calls async_config_entry_first_refresh and
+                # then registers _async_specific_device_found via
+                # bluetooth.async_register_callback. The register call fires the
+                # callback immediately for the currently visible advertisement,
+                # which schedules a second coordinator.async_request_refresh
+                # roughly 50ms after the first refresh's BLE session closes. That
+                # back-to-back second refresh hits the ECU during the wake window
+                # left by the first Mystery and succeeds. Regular polling has no
+                # equivalent trigger, so single Mystery failures are sticky.
+                #
+                # The fix: when async_get_data returns an empty dict, retry
+                # immediately within the same _async_update_data call. The retry's
+                # fresh OBD.create + ELM init + Mystery takes about 10s, by which
+                # time the ECU has woken up and responds normally; the rest of the
+                # 797/743/79B sweep then returns full data. Only when both
+                # attempts come back empty do we conclude the car is off and back
+                # off to slow_poll, preserving the original behavior for the
+                # genuinely-off case.
                 _LOGGER.debug("First attempt empty, retrying immediately to catch ECU wake-up")
                 new_data = await asyncio.wait_for(
                     self.api.async_get_data(self.options),
