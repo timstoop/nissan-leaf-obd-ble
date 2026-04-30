@@ -9,6 +9,7 @@ from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
+from bleak_retry_connector import BleakOutOfConnectionSlotsError
 from py_nissan_leaf_obd_ble import NissanLeafObdBleApiClient
 from .const import DOMAIN
 
@@ -119,6 +120,16 @@ class NissanLeafObdBleDataUpdateCoordinator(DataUpdateCoordinator):
             raise UpdateFailed(
                 f"BLE fetch timed out after {self._fetch_timeout}s"
             ) from err
+        except BleakOutOfConnectionSlotsError:
+            # Proxy has no free BLE connection slots; retrying every 5 min just makes it
+            # worse. Clear the device reference so we enter xs_poll and go dormant until
+            # the next BLE advertisement wakes us up via _async_specific_device_found.
+            self.api._ble_device = None
+            self.update_interval = timedelta(seconds=self._xs_poll_interval)
+            _LOGGER.warning("BLE proxy out of connection slots; suspending until next advertisement")
+            if self._cache_values and self._cache_data:
+                return self._cache_data
+            return {}
         except Exception as err:
             self.update_interval = timedelta(seconds=self._slow_poll_interval)
             _LOGGER.debug("BLE fetch error (%s), backing off to slow poll: %s", err, self.update_interval)
