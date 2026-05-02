@@ -38,6 +38,7 @@ DEFAULT_CACHE_VALUES = True
 # Cap BLE read duration so HA's request_refresh debouncer lock is not held forever;
 # otherwise BLE advertisements trigger async_request_refresh() but it no-ops (~70ms).
 DEFAULT_FETCH_TIMEOUT = 90
+DEFAULT_PROXY_UNHEALTHY_THRESHOLD = 5
 
 
 class NissanLeafObdBleDataUpdateCoordinator(DataUpdateCoordinator):
@@ -57,6 +58,7 @@ class NissanLeafObdBleDataUpdateCoordinator(DataUpdateCoordinator):
         self._address = address
         self.api = api
         self._cache_data: dict[str, Any] = {}
+        self._consecutive_failures = 0
         self.options = options
 
     async def _async_update_data(self) -> dict[str, Any]:
@@ -186,6 +188,7 @@ class NissanLeafObdBleDataUpdateCoordinator(DataUpdateCoordinator):
                 "coordinator:_async_update_data", "fetch_timeout",
                 {"timeout_s": self._fetch_timeout}, "post-fix",
             )
+            self._increment_failures()
             if self._cache_values and self._cache_data:
                 return self._cache_data
             raise UpdateFailed(
@@ -198,16 +201,19 @@ class NissanLeafObdBleDataUpdateCoordinator(DataUpdateCoordinator):
             self.api._ble_device = None
             self.update_interval = timedelta(seconds=self._xs_poll_interval)
             _LOGGER.warning("BLE proxy out of connection slots; suspending until next advertisement")
+            self._increment_failures()
             if self._cache_values and self._cache_data:
                 return self._cache_data
             return {}
         except Exception as err:
             self.update_interval = timedelta(seconds=self._slow_poll_interval)
             _LOGGER.debug("BLE fetch error (%s), backing off to slow poll: %s", err, self.update_interval)
+            self._increment_failures()
             if self._cache_values and self._cache_data:
                 return self._cache_data
             raise UpdateFailed(f"Unable to fetch data: {err}") from err
         else:
+            self._consecutive_failures = 0
             if self.options.get("cache_values", False):
                 self._cache_data.update(new_data)
                 return self._cache_data
@@ -229,3 +235,15 @@ class NissanLeafObdBleDataUpdateCoordinator(DataUpdateCoordinator):
         self._fetch_timeout = float(
             options.get("fetch_timeout", DEFAULT_FETCH_TIMEOUT)
         )
+        self._proxy_unhealthy_threshold = int(
+            options.get("proxy_unhealthy_threshold", DEFAULT_PROXY_UNHEALTHY_THRESHOLD)
+        )
+
+    def _increment_failures(self) -> None:
+        self._consecutive_failures += 1
+        if self._consecutive_failures >= self._proxy_unhealthy_threshold:
+            self.hass.bus.async_fire(
+                "nissan_leaf_obd_ble_proxy_unhealthy",
+                {"consecutive_failures": self._consecutive_failures, "address": self._address},
+            )
+            self._consecutive_failures = 0
