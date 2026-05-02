@@ -4,6 +4,7 @@ TODO: remove once 2026-05 stability is confirmed (no proxy_unhealthy events for 
 """
 import json
 import logging
+import threading
 import time
 from pathlib import Path
 
@@ -30,22 +31,8 @@ def _candidate_paths() -> list[str]:
     return paths
 
 
-def agent_log(location: str, message: str, data: dict, hypothesis_id: str) -> None:
+def _write_line(line: str) -> None:
     global _warned_primary
-    line = (
-        json.dumps(
-            {
-                "sessionId": "67a564",
-                "location": location,
-                "message": message,
-                "data": data,
-                "timestamp": int(time.time() * 1000),
-                "hypothesisId": hypothesis_id,
-            },
-            default=str,
-        )
-        + "\n"
-    )
     wrote_any = False
     first_path: str | None = None
     for path in _candidate_paths():
@@ -70,3 +57,21 @@ def agent_log(location: str, message: str, data: dict, hypothesis_id: str) -> No
             "Debug session 67a564: could not write NDJSON (tried HA config dir and "
             "custom_components fallback). Check permissions."
         )
+
+
+def agent_log(location: str, message: str, data: dict, hypothesis_id: str) -> None:
+    line = (
+        json.dumps(
+            {
+                "sessionId": "67a564",
+                "location": location,
+                "message": message,
+                "data": data,
+                "timestamp": int(time.time() * 1000),
+                "hypothesisId": hypothesis_id,
+            },
+            default=str,
+        )
+        + "\n"
+    )
+    threading.Thread(target=_write_line, args=(line,), daemon=True).start()
