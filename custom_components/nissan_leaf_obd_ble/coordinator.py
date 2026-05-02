@@ -11,7 +11,6 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from py_nissan_leaf_obd_ble import NissanLeafObdBleApiClient
 from .const import DOMAIN
-from ._debug_agent import agent_log
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -60,26 +59,10 @@ class NissanLeafObdBleDataUpdateCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Update data via library."""
-        # #region agent log
-        agent_log(
-            "coordinator:_async_update_data",
-            "enter",
-            {"address": self._address},
-            "H2_H4",
-        )
-        # #endregion
 
         # Check if the device is still available
         _LOGGER.debug("Check if the device is still available to connect")
         available = async_address_present(self.hass, self._address, connectable=True)
-        # #region agent log
-        agent_log(
-            "coordinator:_async_update_data",
-            "address_present",
-            {"available": available},
-            "H2",
-        )
-        # #endregion
         if not available:
             # Device out of range? Switch to active polling interval for when it reappears
             _LOGGER.debug("Car out of range? Switch to extra slow polling")
@@ -93,29 +76,10 @@ class NissanLeafObdBleDataUpdateCoordinator(DataUpdateCoordinator):
             return {}
 
         try:
-            # #region agent log
-            agent_log(
-                "coordinator:_async_update_data",
-                "before_async_get_data",
-                {},
-                "H4",
-            )
-            # #endregion
             new_data = await asyncio.wait_for(
                 self.api.async_get_data(self.options),
                 timeout=self._fetch_timeout,
             )
-            # #region agent log
-            agent_log(
-                "coordinator:_async_update_data",
-                "after_async_get_data",
-                {
-                    "new_data_len": len(new_data) if new_data is not None else None,
-                    "is_none": new_data is None,
-                },
-                "H4_H5",
-            )
-            # #endregion
             if new_data is None:
                 raise UpdateFailed("Failed to connect to OBD device")
             if len(new_data) == 0:
@@ -132,14 +96,6 @@ class NissanLeafObdBleDataUpdateCoordinator(DataUpdateCoordinator):
                     self.update_interval,
                 )
         except TimeoutError as err:
-            # #region agent log
-            agent_log(
-                "coordinator:_async_update_data",
-                "fetch_timeout",
-                {"timeout_s": self._fetch_timeout},
-                "post-fix",
-            )
-            # #endregion
             raise UpdateFailed(
                 f"BLE fetch timed out after {self._fetch_timeout}s"
             ) from err
