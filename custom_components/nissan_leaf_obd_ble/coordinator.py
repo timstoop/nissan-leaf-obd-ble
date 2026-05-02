@@ -11,6 +11,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from bleak_retry_connector import BleakOutOfConnectionSlotsError, get_device
 from py_nissan_leaf_obd_ble import NissanLeafObdBleApiClient
+from ._debug_agent import agent_log
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -60,6 +61,7 @@ class NissanLeafObdBleDataUpdateCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Update data via library."""
+        agent_log("coordinator:_async_update_data", "enter", {"address": self._address}, "H2_H4")
 
         # Prefer a connectable advertisement, but fall back to any seen advertisement.
         # Using async_address_present(connectable=True) as the sole gate causes the
@@ -82,6 +84,12 @@ class NissanLeafObdBleDataUpdateCoordinator(DataUpdateCoordinator):
         if ble_device:
             self.api._ble_device = ble_device
 
+        agent_log(
+            "coordinator:_async_update_data", "address_present",
+            {"ble_device_found": bool(ble_device), "has_device_object": self.api._ble_device is not None},
+            "H2",
+        )
+
         if self.api._ble_device is None:
             _LOGGER.debug(
                 "No BLE device object available, switching to xs_poll: %s",
@@ -101,9 +109,15 @@ class NissanLeafObdBleDataUpdateCoordinator(DataUpdateCoordinator):
                 if fresh:
                     self.api._ble_device = fresh
 
+            agent_log("coordinator:_async_update_data", "before_async_get_data", {}, "H4")
             new_data = await asyncio.wait_for(
                 self.api.async_get_data(self.options),
                 timeout=self._fetch_timeout,
+            )
+            agent_log(
+                "coordinator:_async_update_data", "after_async_get_data",
+                {"new_data_len": len(new_data) if new_data is not None else None, "is_none": new_data is None},
+                "H4_H5",
             )
             if new_data is None:
                 raise UpdateFailed("Failed to connect to OBD device")
@@ -168,6 +182,10 @@ class NissanLeafObdBleDataUpdateCoordinator(DataUpdateCoordinator):
         except TimeoutError as err:
             self.update_interval = timedelta(seconds=self._slow_poll_interval)
             _LOGGER.debug("BLE fetch timed out, backing off to slow poll: %s", self.update_interval)
+            agent_log(
+                "coordinator:_async_update_data", "fetch_timeout",
+                {"timeout_s": self._fetch_timeout}, "post-fix",
+            )
             if self._cache_values and self._cache_data:
                 return self._cache_data
             raise UpdateFailed(
